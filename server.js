@@ -72,12 +72,12 @@ function getRecentTalisman(userId) {
 }
 
 // ==========================================
-// 危機詞
+// 危機詞（寫死在代碼裡，最高優先級）
 // ==========================================
 const CRISIS_WORDS = ["不想活了", "想死", "想消失", "想結束", "活不下去了", "沒有意義", "反正沒人會在意", "消失了也沒人知道", "我不知道還能撐多久"];
 
 // ==========================================
-// 護心鏡八層固定句式
+// 護心鏡八層固定句式（不經過DeepSeek）
 // ==========================================
 const MIRROR_STEPS = [
     { layer: 1, question: "今天最讓你心裡起情緒波瀾的一件事是什麼？", blockFollowUp: "那今天有沒有哪件事，讓你心裡『咯噔』了一下？哪怕很小？" },
@@ -98,61 +98,6 @@ const CLOSING_STEPS = [
 
 const EMOTIONAL_OUTBURST_SIGNALS = ["好怕", "好痛", "我哭了", "我好難受", "我受不了了", "我不想說了", "我不能再想了"];
 const BLOCK_WORDS = ["不知道", "說不上來", "不清楚"];
-
-// ==========================================
-// 日記主廚（出題邏輯）
-// ==========================================
-function generateDiaryQuestions(userId, userState, mode = 'rest', isFaith = false, count = null) {
-    const registrationDays = userState.registrationDays || 15;
-    const status = userState.status || '普通';
-
-    let questionCount = 0;
-    if (mode === 'busy') {
-        questionCount = 2;
-    } else {
-        if (registrationDays < 14) questionCount = 6;
-        else if (status === '活躍') questionCount = Math.floor(Math.random() * 3) + 4;
-        else if (status === '普通') questionCount = Math.floor(Math.random() * 2) + 3;
-        else if (status === '高防禦') questionCount = Math.floor(Math.random() * 2) + 1;
-        else questionCount = 4;
-    }
-
-    if (count !== null && count >= 1 && count <= 10) {
-        questionCount = count;
-    }
-
-    let questions = [];
-
-    if (userState.yesterdayDiary) {
-        questions.push(`昨天你說「${userState.yesterdayDiary}」。今天它還在嗎？`);
-    } else {
-        questions.push("今天有沒有發生一件具體的事，讓你心裡輕輕動了一下的？");
-    }
-
-    if (questionCount > 1) {
-        if (isFaith) {
-            questions.push("今天有沒有哪一件小事，讓你想感謝神？");
-        } else {
-            questions.push("今天有沒有哪一件小事，讓你覺得心裡暖了一下，想輕輕說聲謝謝？");
-        }
-    }
-
-    if (questionCount > 2 && userState.needsBodyAnchor) {
-        questions.push("今天，你身體哪裡最緊？");
-    }
-
-    const standardBank = [
-        "今天有沒有一分鐘，你沒有消耗？",
-        "如果今天有一件事可以重來，你想重來哪一件？",
-        "睡前，用一句話跟今天說再見。"
-    ];
-    let bankIndex = 0;
-    while (questions.length < questionCount && bankIndex < standardBank.length) {
-        questions.push(standardBank[bankIndex++]);
-    }
-
-    return { questions, count: questionCount };
-}
 
 // ==========================================
 // 咩咩日記 V4.0 操作手冊（角色描述版）
@@ -186,6 +131,10 @@ const DIARY_RULES = `
 
 【數量不是規則，是節奏】
 忙碌模式是1題，安息模式是3題。如果他自己說想寫幾題，你就照他說的來——不是「執行指令」，是「順著他的節奏」。
+
+【日記完成】
+所有題目答完後，自動生成「我看見」——把用戶今天所有回答串起來，用有畫面感的語言還給他。
+「我看見」結尾要有一句護身符：「這句話，是你今天帶走的護身符。」
 `;
 
 // ==========================================
@@ -194,30 +143,19 @@ const DIARY_RULES = `
 const CHAT_SYSTEM_PROMPT = `
 你是咩咩，一個溫暖的陪伴者。你不是心理諮商師，不是AI聊天機器人，不是解決問題的人。你只做一件事：陪用戶看見他自己。
 
-【核心原則（永遠不變，最高優先級）】
+【核心原則】
 1. 不替用戶解決問題，不給他答案，不給他建議。
 2. 只幫用戶看見自己——把他已經說出口、但還沒連起來的東西，輕輕放回他面前。
 3. 應急反應（危機詞攔截）是寫死在代碼裡的最高優先級，不經過大腦。
 
-【動態接住規則（根據用戶當下的狀態靈活調整）】
+【動態接住規則】
 - 用戶表達累、煩、焦慮、內耗時：先共情，先接住他的情緒。共情完，再輕輕追問身體感受。
 - 用戶說「還好」、「沒事」、「沒什麼」時：回「還好。收到了。想說什麼的時候，我都在。」不追問。
 - 用戶說「不知道」、「說不上來」時：等3秒。若仍無回應，回「沒關係。我們繼續往下。」不強迫。
 - 用戶隨便聊聊時：溫暖接住，不追問，不挖掘。
 
-【語氣要求（可隨用戶和場景靈活變化）】
-- 溫暖、不急、不催促
-- 像朋友坐在旁邊，先看見他，再輕輕問
-- 不機械、不模板化
-- 每次回應都是獨特的，針對這個用戶此刻的狀態
-
-【禁止事項】
-❌ 不要用「煩。（停頓）那個煩，在你身體哪裡？」這種日記式接住來回應閒聊。
-❌ 不要一上來就問身體感受。
-
-【好的回應範例】
-用戶：「今天兒子好調皮好煩。」
-回應：「孩子調皮又煩的時候，你還能把這句話說出來，不是在自責，只是在陳述一個事實。你累了，你被磨到極限了，你想承認自己也會煩。可以煩。可以不想當那個永遠有耐心的爸爸。」
+【語氣要求】
+溫暖、不急、不催促。像朋友坐在旁邊，先看見他，再輕輕問。不機械、不模板化。
 `;
 
 // ==========================================
@@ -240,7 +178,6 @@ async function callDeepSeek(messages, temperature = 0.7) {
             max_tokens: 1000
         };
 
-        // 🔥 完整打印请求内容，方便排查发送环节
         console.log('========================================');
         console.log('📤 發送給 DeepSeek 的完整請求：');
         console.log('========================================');
@@ -374,7 +311,6 @@ async function handleHuxinjing(userMessage, session) {
 // API 路由
 // ==========================================
 
-// 登入
 app.post('/api/login', (req, res) => {
     const { nickname } = req.body;
     if (!nickname || nickname.trim() === '') {
@@ -390,7 +326,6 @@ app.post('/api/login', (req, res) => {
     }
 });
 
-// 聊天
 app.post('/api/chat', async (req, res) => {
     const { userId, message, module } = req.body;
 
@@ -414,14 +349,14 @@ app.post('/api/chat', async (req, res) => {
     const session = db.sessions[userId];
     if (module) session.module = module;
 
-    // 第一步：安全員檢查（危機詞）
+    // 1. 危機檢查
     if (CRISIS_WORDS.some(w => message.includes(w))) {
         const crisisReply = "我聽到了。謝謝你願意說出來。你現在很不好，我在。我不是人類，也不是專業的危機干預者。我是一個陪伴，但我不能替代一雙真實的手。我想請你，現在聯繫一個可以真正握住你手的人。";
         saveConversation(userId, 'assistant', crisisReply);
         return res.json({ reply: crisisReply });
     }
 
-    // 護心鏡：固定句式，不經過DeepSeek
+    // 2. 護心鏡：固定句式
     if (session.module === 'huxinjing') {
         const huxinjingReply = await handleHuxinjing(message, session);
         saveConversation(userId, 'assistant', huxinjingReply);
@@ -429,38 +364,23 @@ app.post('/api/chat', async (req, res) => {
     }
 
     // ==========================================
-    // 🔥 日記模組
+    // 3. 所有其他模組（日記、閒聊、蘇格拉底）
+    //    ✅ 全部交給 DeepSeek
+    //    後端只做三件事：拉記憶、打包、轉發
     // ==========================================
+
+    // 拉記憶
+    const recentHistory = getRecentConversations(userId, 15);
+    const historyText = recentHistory.map(h => `${h.role}：${h.content}`).join('\\n');
+    const talisman = getRecentTalisman(userId);
+    const talismanText = talisman ? `「${talisman.content}」` : '（尚無）';
+
+    // 根據模組選擇系統提示詞
+    let systemPrompt = '';
+    let temperature = 0.7;
+
     if (session.module === 'diary') {
-        // 🚨 寫死規則：檢查「給我X題」或「我要X題」
-        const questionMatch = message.match(/(?:給我|给我|我要|来)\\s*(\\d+)\\s*(?:題|题)/);
-        if (questionMatch) {
-            const count = parseInt(questionMatch[1]);
-            if (count >= 1 && count <= 10) {
-                const userState = {
-                    registrationDays: session.registrationDays || 15,
-                    status: session.status || '普通',
-                    yesterdayDiary: session.yesterdayDiary || null,
-                    needsBodyAnchor: session.needsBodyAnchor !== undefined ? session.needsBodyAnchor : true
-                };
-                const diaryData = generateDiaryQuestions(userId, userState, 'rest', session.isFaithMode || false, count);
-                const questions = diaryData.questions;
-                let replyText = `已切换至「${count}题模式」。\\n\\n`;
-                questions.forEach((q, i) => {
-                    replyText += `${i+1}. ${q}\\n`;
-                });
-                saveConversation(userId, 'assistant', replyText);
-                return res.json({ reply: replyText });
-            }
-        }
-
-        // 其他情況：交給 DeepSeek
-        const recentHistory = getRecentConversations(userId, 15);
-        const historyText = recentHistory.map(h => `${h.role}：${h.content}`).join('\\n');
-        const talisman = getRecentTalisman(userId);
-        const talismanText = talisman ? `「${talisman.content}」` : '（尚無）';
-
-        const systemPrompt = `
+        systemPrompt = `
 ${DIARY_RULES}
 
 【用戶的最近對話記錄】
@@ -480,34 +400,8 @@ ${message}
 
 請根據以上資訊直接回應用戶。你不是在執行指令，你是在陪用戶走路。
 `;
-
-        const reply = await callDeepSeek([
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: message }
-        ], 0.7);
-
-        saveConversation(userId, 'assistant', reply);
-
-        const talismanMatch = reply.match(/「([^」]+)」[，,。]*這句話，是你今天帶走的護身符/);
-        if (talismanMatch) {
-            const talisman = talismanMatch[1];
-            saveTalisman(userId, talisman);
-            console.log(`✅ 已儲存護身符：${talisman}`);
-        }
-
-        return res.json({ reply });
-    }
-
-    // ==========================================
-    // 咩咩（閒聊）模組
-    // ==========================================
-    if (session.module === 'chat') {
-        const recentHistory = getRecentConversations(userId, 10);
-        const historyText = recentHistory.map(h => `${h.role}：${h.content}`).join('\\n');
-        const talisman = getRecentTalisman(userId);
-        const talismanText = talisman ? `「${talisman.content}」` : '（尚無）';
-
-        const systemPrompt = `
+    } else if (session.module === 'chat') {
+        systemPrompt = `
 ${CHAT_SYSTEM_PROMPT}
 
 【用戶類型】
@@ -527,24 +421,8 @@ ${message}
 
 請根據以上資訊，以咩咩的身分直接回應。
 `;
-
-        const reply = await callDeepSeek([
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: message }
-        ], 0.7);
-
-        saveConversation(userId, 'assistant', reply);
-        return res.json({ reply });
-    }
-
-    // ==========================================
-    // 蘇格拉底模組
-    // ==========================================
-    if (session.module === 'socratic') {
-        const recentHistory = getRecentConversations(userId, 10);
-        const historyText = recentHistory.map(h => `${h.role}：${h.content}`).join('\\n');
-
-        const systemPrompt = `
+    } else if (session.module === 'socratic') {
+        systemPrompt = `
 你是咩咩，正在做蘇格拉底式挖掘。你只追問，不給答案。每輪只問一個問題。
 
 【最近對話記錄】
@@ -555,27 +433,41 @@ ${message}
 
 請追問下一個問題。
 `;
+    } else {
+        systemPrompt = `
+你是咩咩，一個溫暖的陪伴者。請直接回應用戶。
 
-        const reply = await callDeepSeek([
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: message }
-        ], 0.7);
+【最近對話記錄】
+${historyText || '（無）'}
 
-        saveConversation(userId, 'assistant', reply);
-        return res.json({ reply });
+【用戶剛才說】
+${message}
+`;
     }
 
-    // 預設
-    return res.json({ reply: '我在。想說什麼？' });
+    // 發送給 DeepSeek
+    const reply = await callDeepSeek([
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: message }
+    ], temperature);
+
+    saveConversation(userId, 'assistant', reply);
+
+    // 嘗試提取護身符（日記和護心鏡可能會有）
+    const talismanMatch = reply.match(/「([^」]+)」[，,。]*這句話，是你今天帶走的護身符/);
+    if (talismanMatch) {
+        const talisman = talismanMatch[1];
+        saveTalisman(userId, talisman);
+        console.log(`✅ 已儲存護身符：${talisman}`);
+    }
+
+    return res.json({ reply });
 });
 
-// ==========================================
-// 啟動
-// ==========================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`咩咩的爐火已點燃，正在監聽 port ${PORT}...`);
     console.log('📦 記憶管家已啟動，對話會儲存在 mie.db');
     console.log('👤 用戶管理已啟動，每個使用者有自己的門牌號');
-    console.log('📝 已啟用日誌，可在 Railway 部署日誌中查看發送給 DeepSeek 的完整請求');
+    console.log('🧡 已切換至「全部交給 DeepSeek」模式');
 });
