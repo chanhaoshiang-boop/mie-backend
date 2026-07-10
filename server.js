@@ -221,7 +221,7 @@ const CHAT_SYSTEM_PROMPT = `
 `;
 
 // ==========================================
-// 呼叫 DeepSeek API
+// 呼叫 DeepSeek API（含完整日志）
 // ==========================================
 async function callDeepSeek(messages, temperature = 0.7) {
     const apiKey = process.env.DEEPSEEK_API_KEY;
@@ -233,26 +233,37 @@ async function callDeepSeek(messages, temperature = 0.7) {
     }
 
     try {
+        const requestBody = {
+            model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+            messages: messages,
+            temperature: temperature,
+            max_tokens: 1000
+        };
+
+        // 🔥 完整打印请求内容，方便排查发送环节
+        console.log('========================================');
+        console.log('📤 發送給 DeepSeek 的完整請求：');
+        console.log('========================================');
+        console.log(JSON.stringify(requestBody, null, 2));
+        console.log('========================================');
+
         const response = await fetch(`${baseURL}/chat/completions`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${apiKey}`
             },
-            body: JSON.stringify({
-                model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
-                messages: messages,
-                temperature: temperature,
-                max_tokens: 1000
-            })
+            body: JSON.stringify(requestBody)
         });
 
         if (!response.ok) {
-            console.error('DeepSeek API 錯誤:', response.status);
+            const errorText = await response.text();
+            console.error('DeepSeek API 錯誤:', response.status, errorText);
             return "我剛剛沒聽清楚，你可以再說一次嗎？";
         }
 
         const data = await response.json();
+        console.log('✅ DeepSeek 回覆成功');
         return data.choices[0].message.content;
     } catch (error) {
         console.error('DeepSeek API 連線錯誤:', error);
@@ -566,4 +577,5 @@ app.listen(PORT, () => {
     console.log(`咩咩的爐火已點燃，正在監聽 port ${PORT}...`);
     console.log('📦 記憶管家已啟動，對話會儲存在 mie.db');
     console.log('👤 用戶管理已啟動，每個使用者有自己的門牌號');
+    console.log('📝 已啟用日誌，可在 Railway 部署日誌中查看發送給 DeepSeek 的完整請求');
 });
