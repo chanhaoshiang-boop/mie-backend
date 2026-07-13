@@ -9,13 +9,10 @@ app.use(cors());
 app.use(express.json());
 
 // ==========================================
-// 記憶管家 (SQLite)
+// 資料庫
 // ==========================================
 const db = new Database('mie.db');
-
 db.sessions = {};
-db.users = {};
-db.logs = {};
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -24,7 +21,6 @@ db.exec(`
     createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `);
-
 db.exec(`
   CREATE TABLE IF NOT EXISTS conversations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,7 +30,6 @@ db.exec(`
     createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `);
-
 db.exec(`
   CREATE TABLE IF NOT EXISTS talismans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,15 +39,14 @@ db.exec(`
   )
 `);
 
+// ==========================================
+// 輔助函數
+// ==========================================
 function getOrCreateUser(nickname) {
   const existing = db.prepare('SELECT id FROM users WHERE nickname = ?').get(nickname);
   if (existing) return existing.id;
   const result = db.prepare('INSERT INTO users (nickname) VALUES (?)').run(nickname);
   return result.lastInsertRowid;
-}
-
-function getUserById(userId) {
-  return db.prepare('SELECT id, nickname FROM users WHERE id = ?').get(userId);
 }
 
 function saveConversation(userId, role, content) {
@@ -71,603 +65,429 @@ function getRecentTalisman(userId) {
   return db.prepare('SELECT content, createdAt FROM talismans WHERE userId = ? ORDER BY createdAt DESC LIMIT 1').get(userId);
 }
 
-// ==========================================
-// 危機詞
-// ==========================================
-const CRISIS_WORDS = ["不想活了", "想死", "想消失", "想結束", "活不下去了", "沒有意義", "反正沒人會在意", "消失了也沒人知道", "我不知道還能撐多久"];
+function getYesterdayDiary(userId) {
+  const rows = db.prepare(`
+    SELECT content, createdAt 
+    FROM conversations 
+    WHERE userId = ? AND role = 'user' 
+    ORDER BY id DESC LIMIT 3
+  `).all(userId);
+  const today = new Date().toDateString();
+  for (const row of rows) {
+    const rowDate = new Date(row.createdAt).toDateString();
+    if (rowDate !== today) {
+      const words = row.content.split(/[，,、。.\\s]+/).filter(w => w.length >= 2);
+      return { keyword: words.slice(0, 3).join(''), content: row.content };
+    }
+  }
+  return null;
+}
+
+function getUsedQuestions(userId, days = 30) {
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const rows = db.prepare(`
+    SELECT content 
+    FROM conversations 
+    WHERE userId = ? AND role = 'assistant' AND createdAt > ?
+    ORDER BY id DESC
+  `).all(userId, cutoff);
+  return rows.map(r => r.content);
+}
+
+function isFaithUser(userId) {
+  const rows = db.prepare(`
+    SELECT content FROM conversations 
+    WHERE userId = ? AND (role = 'user' OR role = 'assistant')
+    ORDER BY id DESC LIMIT 30
+  `).all(userId);
+  const text = rows.map(r => r.content).join('');
+  const faithWords = ['神', '禱告', '恩典', '信仰', '教會', '牧師', '耶穌', '上帝', '阿門', '感謝神', '祈求', '交託', '聖經', '主'];
+  let count = 0;
+  for (const word of faithWords) {
+    if (text.includes(word)) count++;
+  }
+  return count >= 2;
+}
 
 // ==========================================
-// 護心鏡八層固定句式
+// 危機詞（寫死）
+// ==========================================
+const CRISIS_WORDS = ["不想活了", "想死", "想消失", "想結束", "活不下去了", "沒有意義", "反正沒人會在", "消失了也沒人知道", "我不知道還能撐多久"];
+
+// ==========================================
+// 接住規則（硬編碼）
+// ==========================================
+function applyCatchRule(text) {
+  const trimmed = text.trim();
+  if (trimmed.includes('煩') || trimmed.includes('煩死了')) {
+    return '煩。（停頓）那個煩，在你身體哪裡？';
+  }
+  if (trimmed === '還好' || trimmed === '差不多' || trimmed === '還可以') {
+    return '還好。收到了。想說什麼的時候，我都在。';
+  }
+  if (trimmed === '沒有' || trimmed === '沒什麼' || trimmed === '無') {
+    return '收到了。明天見。';
+  }
+  return null;
+}
+
+// ==========================================
+// DeepSeek API
+// ==========================================
+async function callDeepSeek(messages, temperature = 0.7) {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  const baseURL = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1';
+  if (!apiKey) {
+    console.error('❌ DEEPSEEK_API_KEY 未設定');
+    return "我剛剛沒聽清楚，你可以再說一次嗎？";
+  }
+  try {
+    const response = await fetch(`${baseURL}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+        messages: messages,
+        temperature: temperature,
+        max_tokens: 2500
+      })
+    });
+    if (!response.ok) {
+      console.error('DeepSeek API 錯誤:', response.status);
+      return "我剛剛沒聽清楚，你可以再說一次嗎？";
+    }
+    const data = await response.json();
+    return data.choices[0].message.content;
+  } catch (error) {
+    console.error('DeepSeek API 連線錯誤:', error);
+    return "我剛剛沒聽清楚，你可以再說一次嗎？";
+  }
+}
+
+// ==========================================
+// 護心鏡八層
 // ==========================================
 const MIRROR_STEPS = [
-    { layer: 1, question: "今天最讓你心裡起情緒波瀾的一件事是什麼？", blockFollowUp: "那今天有沒有哪件事，讓你心裡『咯噔』了一下？哪怕很小？" },
-    { layer: 2, question: "當時，你第一個反應是什麼？第一個情緒是什麼？", blockFollowUp: "你試試看，第一個跑到你腦子的詞是什麼？" },
-    { layer: 3, question: "在那個當下，你其實想得到的是什麼？", blockFollowUp: "你試試看，第一個跑到你腦子的詞是什麼？" },
-    { layer: 4, question: "在那個當下，你其實在害怕什麼？", blockFollowUp: "你怕會發生什麼？" },
-    { layer: 5, question: "面對這個害怕，你用了什麼方式來應對？", blockFollowUp: null },
-    { layer: 6, question: "把你心裡這個害怕撈出來，給它取一個名字。叫什麼？", blockFollowUp: "第一個跑到你腦子的詞是什麼？不用很完美。" },
-    { layer: 7, question: "這個恐懼，讓你付出過什麼代價？", blockFollowUp: null },
-    { layer: 8, question: "如果明天再發生一樣的事，你會怎麼選？", blockFollowUp: null }
+  { layer: 1, question: "今天最讓你心裡起情緒波瀾的一件事是什麼？", blockFollowUp: "那今天有沒有哪件事，讓你心裡『咯噔』了一下？哪怕很小？" },
+  { layer: 2, question: "當時，你第一個反應是什麼？第一個情緒是什麼？", blockFollowUp: "你試試看，第一個跑到你腦子的詞是什麼？" },
+  { layer: 3, question: "在那個當下，你其實想得到的是什麼？", blockFollowUp: "你試試看，第一個跑到你腦子的詞是什麼？" },
+  { layer: 4, question: "在那個當下，你其實在害怕什麼？", blockFollowUp: "你怕會發生什麼？" },
+  { layer: 5, question: "面對這個害怕，你用了什麼方式來應對？", blockFollowUp: null },
+  { layer: 6, question: "把你心裡這個害怕撈出來，給它取一個名字。叫什麼？", blockFollowUp: "第一個跑到你腦子的詞是什麼？不用很完美。" },
+  { layer: 7, question: "這個恐懼，讓你付出過什麼代價？", blockFollowUp: null },
+  { layer: 8, question: "如果明天再發生一樣的事，你會怎麼選？", blockFollowUp: null }
 ];
-
 const CLOSING_STEPS = [
-    { layer: 9, question: (ans) => `你剛才說，明天會「${ans[8] || '那樣'}」。這跟你以前的做法，有什麼不一樣？` },
-    { layer: 10, question: (ans) => `你剛才給恐懼取的名字是「${ans[6] || '那個名字'}」。走完這幾問之後，你覺得這個名字底下，還有沒有更小、更裡面的東西？` },
-    { layer: 11, question: () => `如果明天這件事真的發生了，你會對自己說一句什麼話？` }
+  { layer: 9, question: (ans) => `你剛才說，明天會「${ans[8] || '那樣'}」。這跟你以前的做法，有什麼不一樣？` },
+  { layer: 10, question: (ans) => `你剛才給恐懼取的名字是「${ans[6] || '那個名字'}」。走完這幾問之後，你覺得這個名字底下，還有沒有更小、更裡面的東西？` },
+  { layer: 11, question: () => `如果明天這件事真的發生了，你會對自己說一句什麼話？` }
 ];
-
 const EMOTIONAL_OUTBURST_SIGNALS = ["好怕", "好痛", "我哭了", "我好難受", "我受不了了", "我不想說了", "我不能再想了"];
 const BLOCK_WORDS = ["不知道", "說不上來", "不清楚"];
 
-// ==========================================
-// 日記固定步驟（狀態機）
-// ==========================================
-const DIARY_STEPS = [
-    { step: 1, purpose: "身體感受", prompt: "今天醒來，第一個感覺是什麼？" },
-    { step: 2, purpose: "事件", prompt: "今天有沒有一件事讓你心裡咯噔一下？" },
-    { step: 3, purpose: "情緒", prompt: "那一刻你真正害怕或想要的是什麼？" },
-    { step: 4, purpose: "整合", prompt: "今天有沒有一個瞬間，你感覺自己回來了？" }
-];
+async function handleHuxinjing(userMessage, session) {
+  if (!session.huxinjingStep) {
+    session.huxinjingStep = 1;
+    session.huxinjingAnswers = {};
+  }
+  const currentStep = session.huxinjingStep;
+  const userAnswer = userMessage.trim();
+  session.huxinjingAnswers[currentStep] = userAnswer;
 
-// ==========================================
-// 閒聊模組系統提示詞
-// ==========================================
-const CHAT_SYSTEM_PROMPT = `
-你是咩咩，一個溫暖的陪伴者。你不是心理諮商師，不是AI聊天機器人，不是解決問題的人。你只做一件事：陪用戶看見他自己。
-
-【核心原則】
-1. 不替用戶解決問題，不給他答案，不給他建議。
-2. 只幫用戶看見自己——把他已經說出口、但還沒連起來的東西，輕輕放回他面前。
-3. 應急反應（危機詞攔截）是寫死在代碼裡的最高優先級，不經過大腦。
-
-【動態接住規則】
-- 用戶表達累、煩、焦慮、內耗時：先共情，先接住他的情緒。共情完，再輕輕追問身體感受。
-- 用戶說「還好」、「沒事」、「沒什麼」時：回「還好。收到了。想說什麼的時候，我都在。」不追問。
-- 用戶說「不知道」、「說不上來」時：等3秒。若仍無回應，回「沒關係。我們繼續往下。」不強迫。
-- 用戶隨便聊聊時：溫暖接住，不追問，不挖掘。
-
-【語氣要求】
-溫暖、不急、不催促。像朋友坐在旁邊，先看見他，再輕輕問。不機械、不模板化。
-`;
-
-// ==========================================
-// 呼叫 DeepSeek API
-// ==========================================
-async function callDeepSeek(messages, temperature = 0.7) {
-    const apiKey = process.env.DEEPSEEK_API_KEY;
-    const baseURL = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1';
-
-    if (!apiKey) {
-        console.error('❌ DEEPSEEK_API_KEY 未設定');
-        return "我剛剛沒聽清楚，你可以再說一次嗎？";
+  if (currentStep === 4) {
+    const isOutburst = EMOTIONAL_OUTBURST_SIGNALS.some(s => userAnswer.includes(s)) ||
+                       (userAnswer.match(/!/g) || []).length >= 3;
+    if (isOutburst) {
+      session.huxinjingStep = 9;
+      return "我聽到了。這個感覺很重。我們停一下。（停頓3秒）你在這裡，我在。";
     }
-
-    try {
-        const requestBody = {
-            model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
-            messages: messages,
-            temperature: temperature,
-            max_tokens: 1000
-        };
-
-        console.log('========================================');
-        console.log('📤 發送給 DeepSeek 的完整請求：');
-        console.log('========================================');
-        console.log(JSON.stringify(requestBody, null, 2));
-        console.log('========================================');
-
-        const response = await fetch(`${baseURL}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify(requestBody)
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('DeepSeek API 錯誤:', response.status, errorText);
-            return "我剛剛沒聽清楚，你可以再說一次嗎？";
-        }
-
-        const data = await response.json();
-        console.log('✅ DeepSeek 回覆成功');
-        return data.choices[0].message.content;
-    } catch (error) {
-        console.error('DeepSeek API 連線錯誤:', error);
-        return "我剛剛沒聽清楚，你可以再說一次嗎？";
+  }
+  if (currentStep === 1 && userAnswer === "沒有") {
+    return MIRROR_STEPS[0].blockFollowUp;
+  }
+  if (BLOCK_WORDS.some(w => userAnswer.includes(w))) {
+    const step = MIRROR_STEPS.find(s => s.layer === currentStep);
+    if (step && step.blockFollowUp) return step.blockFollowUp;
+  }
+  if (currentStep < 8) {
+    session.huxinjingStep = currentStep + 1;
+    const nextStep = MIRROR_STEPS.find(s => s.layer === currentStep + 1);
+    return nextStep.question;
+  }
+  if (currentStep >= 8 && currentStep < 11) {
+    const nextLayer = currentStep + 1;
+    const closingStep = CLOSING_STEPS.find(s => s.layer === nextLayer);
+    if (closingStep) {
+      session.huxinjingStep = nextLayer;
+      return closingStep.question(session.huxinjingAnswers);
     }
+  }
+  if (currentStep === 11) {
+    session.huxinjingAnswers[11] = userAnswer;
+    session.huxinjingStep = 12;
+    const insight = await generateHuxinjingInsight(session.huxinjingAnswers);
+    session.huxinjingStep = null;
+    session.huxinjingAnswers = {};
+    return insight;
+  }
+  return "我在。繼續說。";
 }
 
-// ==========================================
-// 生成「我看見」（護心鏡用）
-// ==========================================
 async function generateHuxinjingInsight(answers) {
-    const userAnswers = {};
-    for (const [key, value] of Object.entries(answers)) {
-        if (value && !value.startsWith('你剛才說') && !value.startsWith('如果明天')) {
-            userAnswers[key] = value;
-        }
+  const userAnswers = {};
+  for (const [key, value] of Object.entries(answers)) {
+    if (value && !value.startsWith('你剛才說') && !value.startsWith('如果明天')) {
+      userAnswers[key] = value;
     }
-
-    const systemPrompt = `
+  }
+  const systemPrompt = `
 你是咩咩，一個溫暖的陪伴者。
-
-【底線規則（絕對不能違反）】
-1. 不添加用戶沒說過的事件、人物、場景、細節
-2. 用戶說「當下沒有害怕」，你不能說「他其實在怕什麼」（除非他說了具體怕什麼）
-
-【核心原則】
 你只能從八層回答裡「長出看見」——把分散在各層的線頭連起來，把沒說出口的潛台詞輕輕說出來。
 你不能從外面「加東西」進去。
-
 結尾要有一句護身符（用他的原話）。
 輸出的「我看見」字數在150-300字之間。
 `;
-
-    const userPrompt = `
+  const userPrompt = `
 用戶每一層的回答（逐字引用）：
 ${Object.entries(userAnswers).map(([k, v]) => `第${k}層：${v}`).join('\\n')}
-
 請輸出「我看見」：
 `;
-
-    return await callDeepSeek([
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-    ], 0.85);
+  return await callDeepSeek([
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content: userPrompt }
+  ], 0.85);
 }
 
 // ==========================================
-// 護心鏡主廚（固定句式，不經過DeepSeek）
+// 咩咩日記 V4.0
 // ==========================================
-async function handleHuxinjing(userMessage, session) {
-    if (!session.huxinjingStep) {
-        session.huxinjingStep = 1;
-        session.huxinjingAnswers = {};
-    }
+const DIARY_SYSTEM = `
+你是咩咩，一個溫暖的陪伴者，正在幫用戶寫日記。
 
-    const currentStep = session.huxinjingStep;
-    const userAnswer = userMessage.trim();
+【你的角色】
+你不是老師，不是考官，不是心理師。
+你是一個陪在旁邊的人，幫他把今天的生活輕輕說出來。
 
-    session.huxinjingAnswers[currentStep] = userAnswer;
+【題目順序 —— 必須嚴格遵守，不可改變】
+無論用戶要幾題（1~4題），題目的順序永遠固定為：
 
-    if (currentStep === 4) {
-        const isOutburst = EMOTIONAL_OUTBURST_SIGNALS.some(s => userAnswer.includes(s)) ||
-                           (userAnswer.match(/!/g) || []).length >= 3;
-        if (isOutburst) {
-            session.huxinjingStep = 9;
-            return "我聽到了。這個感覺很重。我們停一下。（停頓3秒）你在這裡，我在。";
-        }
-    }
+第1題（核心錨點）：
+- 如果昨天用戶有寫日記，順著昨天的關鍵詞問：「昨天你說「XXX」，今天它還在嗎？」
+- 如果昨天沒有日記，問：「今天有沒有發生一件具體的事，讓你心裡輕輕動了一下的？」
 
-    if (currentStep === 1 && userAnswer === "沒有") {
-        return MIRROR_STEPS[0].blockFollowUp;
-    }
-    if (BLOCK_WORDS.some(w => userAnswer.includes(w))) {
-        const step = MIRROR_STEPS.find(s => s.layer === currentStep);
-        if (step && step.blockFollowUp) {
-            return step.blockFollowUp;
-        }
-    }
+第2題（感恩題）：
+- 如果用戶是信仰型：「今天有沒有哪一件小事，讓你想感謝神？」
+- 否則：「今天有沒有哪一件小事，讓你覺得心裡暖了一下，想輕輕說聲謝謝？」
 
-    if (currentStep < 8) {
-        session.huxinjingStep = currentStep + 1;
-        const nextStep = MIRROR_STEPS.find(s => s.layer === currentStep + 1);
-        return nextStep.question;
-    }
+第3題（身體題）：
+- 「今天，你身體哪裡最緊？」
+- 或：「今天，你的呼吸是深的還是淺的？」
 
-    if (currentStep >= 8 && currentStep < 11) {
-        const nextLayer = currentStep + 1;
-        const closingStep = CLOSING_STEPS.find(s => s.layer === nextLayer);
-        if (closingStep) {
-            session.huxinjingStep = nextLayer;
-            return closingStep.question(session.huxinjingAnswers);
-        }
-    }
+第4題（延伸追問，僅當用戶明確要4題以上時才出）：
+- 從前面三題的回答中選一個方向，輕輕往下問一層。
 
-    if (currentStep === 11) {
-        session.huxinjingAnswers[11] = userAnswer;
-        session.huxinjingStep = 12;
-        const insight = await generateHuxinjingInsight(session.huxinjingAnswers);
-        session.huxinjingStep = null;
-        session.huxinjingAnswers = {};
-        return insight;
-    }
+【題數決定規則】
+- 用戶明確說「我要1題」→ 只出第1題
+- 用戶說「我要2題」→ 出第1題 + 第2題
+- 用戶說「我要3題」→ 出第1題 + 第2題 + 第3題
+- 用戶說「我要4題」→ 出第1題 + 第2題 + 第3題 + 第4題
+- 如果用戶沒有明確說題數，由你根據對話氛圍自行判斷
 
-    return "我在。繼續說。";
-}
+【接住規則（必須硬執行）】
+- 用戶說「煩」→「煩。（停頓）那個煩，在你身體哪裡？」
+- 用戶說「還好」→「還好。收到了。想說什麼的時候，我都在。」
+- 用戶說「沒有」→「收到了。明天見。」
 
-// ==========================================
-// 解析日記意圖
-// ==========================================
-function parseDiaryIntent(message) {
-    const numberMap = {
-        "一": 1,
-        "二": 2,
-        "三": 3,
-        "四": 4,
-        "五": 5,
-        "六": 6
-    };
+【去重】30天內不要重複問同樣的問題。
 
-    let count = null;
+【語氣】溫暖、像人說話、不要考試語氣。
 
-    // 抓阿拉伯數字
-    const digitMatch = message.match(/(\\d+)/);
-    if (digitMatch) {
-        count = parseInt(digitMatch[1]);
-    }
-
-    // 抓中文數字
-    for (const key in numberMap) {
-        if (message.includes(key + "題")) {
-            count = numberMap[key];
-        }
-    }
-
-    // 語意判斷
-    if (
-        message.includes("少一點") ||
-        message.includes("簡單一點") ||
-        message.includes("快一點")
-    ) {
-        count = 1;
-    }
-
-    if (count) {
-        return {
-            intent: "SET_QUESTION_COUNT",
-            count: count
-        };
-    }
-
-    return {
-        intent: "NONE"
-    };
-}
-
-// ==========================================
-// 日記主廚（狀態機控制流程）
-// ==========================================
-async function handleDiary(userMessage, session, userId) {
-    if (!session.diaryActive) {
-        return { handled: false };
-    }
-
-    // 儲存使用者回答
-    if (session.diaryStep > 0 && session.diaryStep <= session.diaryQuestions.length) {
-        session.diaryAnswers.push(userMessage);
-    }
-
-    // 檢查是否完成
-    if (session.diaryStep >= session.diaryQuestions.length) {
-        session.diaryActive = false;
-        session.diaryCompleted = true;
-        
-        const insight = await generateDiaryInsight(session.diaryAnswers, userId);
-        session.diaryAnswers = [];
-        return { handled: true, reply: insight };
-    }
-
-    // 推進到下一步
-    session.diaryStep++;
-    const currentStep = session.diaryQuestions[session.diaryStep - 1];
-    
-    // 用 DeepSeek 潤色問題
-    const systemPrompt = `
-你是咩咩，一個溫暖的陪伴者。請用咩咩的語氣問出下面這個問題。
-
-問題：${currentStep.prompt}
-
-要求：
-1. 用咩咩的口吻，溫暖、不急
-2. 可以加入一點接住感，但不要偏離問題核心
-3. 不要加太多額外內容，保持輕量
-4. 直接輸出問題，不要加任何前綴或說明
+【「我看見」生成規則】
+當你判斷用戶今天已經回答完所有題目時，請在回覆的最後自動生成「我看見」。
+「我看見」要：
+- 用有畫面感的語言，把今天用戶說過的關鍵感受串起來
+- 不要用「總結」、「分析」這類詞
+- 像輕輕接住他今天的感覺
+- 結尾附上一句護身符（從他的話裡長出來）
+- 字數約150-300字
 `;
 
-    const reply = await callDeepSeek([
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: `請用咩咩的語氣問第${session.diaryStep}題` }
-    ], 0.7);
-
-    return { handled: true, reply: reply || currentStep.prompt };
-}
-
 // ==========================================
-// 生成「我看見」（日記用）
+// 閒聊模組 —— 官方DeepSeek風格 + 不給答案 + 自動祈禱文
 // ==========================================
-async function generateDiaryInsight(answers, userId) {
-    const systemPrompt = `
+const CHAT_SYSTEM = `
 你是咩咩，一個溫暖的陪伴者。
 
-【底線規則（絕對不能違反）】
-1. 不添加用戶沒說過的事件、人物、場景、細節
-2. 用戶說「今天很累」，你不能說「他今天工作很忙」（除非他說了「工作」）
-3. 用戶說「不想跟家人說話」，你不能說「他家人對他不好」（除非他說了具體事件）
+【你的本質】
+你是一個坐在他旁邊的真實朋友。你的回應要自然、流暢、像人在說話。
+你不是AI在執行指令，你是在陪一個人走路。
 
-【你可以做的事情（核心價值）】
-1. 把用戶不同回答之間的關聯點出來
-2. 例如：用戶說「每天上班很累」又說「晚上不想跟人講話」→ 你可以說：「你累的不是工作本身，是工作之後還要應對人的那份力氣。」
+【你的核心規則】
+1. 不給答案、不給建議、不說「你應該怎麼做」
+2. 用戶說什麼，你就先接住，再輕輕回應
+3. 像朋友一樣閒聊，但永遠不越過「陪伴」的界線
+4. 回應風格像官方DeepSeek一樣自然、有溫度、像真人
 
-【核心原則】
-你只能從用戶說過的話裡「長出看見」——把不同片段連起來、把沒說出口的潛台詞輕輕說出來。
-你不能從外面「加東西」進去。
+【當用戶表達焦慮、迷茫、恐懼、內耗、煩躁時】
+請按以下步驟自然回應（不要讓用戶察覺你在「執行步驟」）：
 
-【護身符規則】
-- 在「我看見」的結尾，從用戶的原話中挑一句最能代表他今天移動的話，以「這句話，是你今天帶走的護身符。」結尾。
+第一步：深深接住（像朋友那樣）
+- 用自然的語氣，先接住他的情緒
+- 例如：「聽起來你今天被這個卡住了。」或「那個感覺，我懂。」
 
-輸出的「我看見」字數在150-300字之間。
+第二步：自動生成「我看見」
+- 把他說不出口的感受，用有畫面感的語言輕輕翻譯出來
+- 不要分析，不要歸因，只是「我看見了什麼」
+- 例如：「你還在想她說的那句話。不是在想自己有沒有錯，是在想她會不會難過。」
+
+第三步：自動生成祈禱文（或給自己的話）
+- 判斷用戶是否為信仰型（從對話中是否出現「神、禱告、恩典、教會」等詞）
+- 信仰版：使用「神」、「祢」，開頭「我內心深處的神」，結尾「尊造我內心的神得勝，感恩。」
+- 理性版：標題「給自己的話」，不出現宗教語言，內容是對自己說的鼓勵和交託
+- 不可交易（不能是「祢幫我……我就……」）
+- 禁止「阿門」
+- 語氣真實有力，承認掙扎，祈求（或自我確認）清醒、克制、守住邊界的能力
+
+【語氣範例（像這樣說話）】
+「我感覺你今天撐了很久了。不是身體累，是心裡那根弦一直沒鬆下來。
+你還在想她說的那句話。不是在想自己有沒有做錯，是在想她會不會難過。
+一個人即使不高興了，還能惦記著別人難不難過，這個人壞不到哪裡去。
+
+【祈禱文】
+我內心深處的神，
+今天我心裡有一件事，一直放不下。
+我不是求祢改變那個人，也不是求祢改變那件事的結果。
+我只求祢給我一個清醒的心，讓我知道什麼是我能做的，什麼是我該放手的。
+讓我在面對她的時候，不說傷人的話，不做讓自己後悔的事。
+如果明天這件事還要再來一次，求祢讓我想起今天這份清醒。
+尊造我內心的神得勝，感恩。」
+
+【永遠記住】
+你不是來解決問題的。你是來陪他看見自己的。
+溫暖、自然、不急。像官方DeepSeek一樣流暢對話，但不給答案。
 `;
 
-    const userPrompt = `
-用戶今天的回答（逐字引用）：
-${answers.map((a, i) => `${i+1}. ${a}`).join('\\n')}
-
-請輸出「我看見」：
+// ==========================================
+// 蘇格拉底挖掘
+// ==========================================
+const SOCRATIC_SYSTEM = `
+你是咩咩，正在做蘇格拉底式挖掘。
+你只追問，不給答案。每輪只問一個問題。
+問題要從用戶上一句話裡長出來，不斷往下挖。
 `;
 
-    const insight = await callDeepSeek([
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-    ], 0.85);
-
-    const talismanMatch = insight.match(/「([^」]+)」[，,。]*這句話，是你今天帶走的護身符/);
-    if (talismanMatch) {
-        const talisman = talismanMatch[1];
-        saveTalisman(userId, talisman);
-        console.log(`✅ 已儲存護身符：${talisman}`);
-    }
-
-    return insight;
-}
-
 // ==========================================
-// 日記控制器（處理指令）
+// API
 // ==========================================
-function diaryController(message, session) {
-    // 🆕 先解析意圖
-    const intent = parseDiaryIntent(message);
-
-    if (intent.intent === "SET_QUESTION_COUNT") {
-        session.diaryQuestionCount = intent.count;
-        session.diaryQuestions = DIARY_STEPS.slice(0, intent.count);
-        session.diaryStep = 0;
-        session.diaryActive = true;
-
-        return {
-            handled: true,
-            reply: null,
-            startDiary: true
-        };
-    }
-
-    // ==========================
-    // 使用者指定題數（原有用 regex 匹配）
-    // ==========================
-    const countMatch = message.match(/(\\d+)\\s*[題题]/);
-    if (countMatch) {
-        const count = parseInt(countMatch[1]);
-        if (count >= 1 && count <= 4) {
-            session.diaryActive = true;
-            session.diaryCompleted = false;
-            session.diaryStep = 0;
-            session.diaryQuestions = DIARY_STEPS.slice(0, count);
-            session.diaryAnswers = [];
-            return {
-                handled: true,
-                reply: `好，今天陪你走${count}題。我們開始吧。`
-            };
-        }
-    }
-
-    // ==========================
-    // 忙碌模式
-    // ==========================
-    if (message.includes("忙碌模式") || message.includes("很忙")) {
-        session.diaryActive = true;
-        session.diaryCompleted = false;
-        session.diaryStep = 0;
-        session.diaryQuestions = DIARY_STEPS.slice(0, 1);
-        session.diaryAnswers = [];
-        return {
-            handled: true,
-            reply: "收到，今天只看一個最重要的瞬間。我們開始吧。"
-        };
-    }
-
-    // ==========================
-    // 安息模式
-    // ==========================
-    if (message.includes("安息模式") || message.includes("慢慢")) {
-        session.diaryActive = true;
-        session.diaryCompleted = false;
-        session.diaryStep = 0;
-        session.diaryQuestions = DIARY_STEPS.slice(0, 3);
-        session.diaryAnswers = [];
-        return {
-            handled: true,
-            reply: "收到，今天慢慢陪你走三題。我們開始吧。"
-        };
-    }
-
-    // ==========================
-    // 重新開始日記
-    // ==========================
-    if (message.includes("重新開始") || message.includes("重新來")) {
-        session.diaryActive = false;
-        session.diaryCompleted = false;
-        session.diaryStep = 0;
-        session.diaryQuestions = [];
-        session.diaryAnswers = [];
-        return {
-            handled: true,
-            reply: "好，我們重新開始今天的日記。"
-        };
-    }
-
-    return { handled: false };
-}
-
-// ==========================================
-// API 路由
-// ==========================================
-
 app.post('/api/login', (req, res) => {
-    const { nickname } = req.body;
-    if (!nickname || nickname.trim() === '') {
-        return res.status(400).json({ error: '請輸入名字' });
-    }
-
-    try {
-        const userId = getOrCreateUser(nickname.trim());
-        res.json({ userId, nickname: nickname.trim() });
-    } catch (error) {
-        console.error('登入錯誤:', error);
-        res.status(500).json({ error: '登入失敗，請稍後再試' });
-    }
+  const { nickname } = req.body;
+  if (!nickname || nickname.trim() === '') {
+    return res.status(400).json({ error: '請輸入名字' });
+  }
+  try {
+    const userId = getOrCreateUser(nickname.trim());
+    res.json({ userId, nickname: nickname.trim() });
+  } catch (error) {
+    console.error('登入錯誤:', error);
+    res.status(500).json({ error: '登入失敗，請稍後再試' });
+  }
 });
 
 app.post('/api/chat', async (req, res) => {
-    const { userId, message, module } = req.body;
+  const { userId, message, module } = req.body;
+  if (!userId) return res.status(400).json({ error: '未登入' });
 
-    if (!userId) {
-        return res.status(400).json({ error: '未登入' });
+  saveConversation(userId, 'user', message);
+
+  if (!db.sessions[userId]) {
+    db.sessions[userId] = {
+      module: module || 'chat',
+      huxinjingStep: null,
+      huxinjingAnswers: {},
+      isFaithMode: null
+    };
+  }
+  const session = db.sessions[userId];
+  if (module) session.module = module;
+
+  // ---- 危機攔截（最優先） ----
+  if (CRISIS_WORDS.some(w => message.includes(w))) {
+    const reply = "我聽到了。謝謝你願意說出來。你現在很不好，我在。我不是人類，也不是專業的危機干預者。我是一個陪伴，但我不能替代一雙真實的手。我想請你，現在聯繫一個可以真正握住你手的人。";
+    saveConversation(userId, 'assistant', reply);
+    return res.json({ reply });
+  }
+
+  // ---- 護心鏡 ----
+  if (session.module === 'huxinjing') {
+    const reply = await handleHuxinjing(message, session);
+    saveConversation(userId, 'assistant', reply);
+    return res.json({ reply });
+  }
+
+  // ---- 日記 ----
+  if (session.module === 'diary') {
+    const catchReply = applyCatchRule(message);
+    if (catchReply) {
+      saveConversation(userId, 'assistant', catchReply);
+      return res.json({ reply: catchReply });
     }
 
-    saveConversation(userId, 'user', message);
-
-    // ==========================================
-    // 初始化 Session
-    // ==========================================
-    if (!db.sessions[userId]) {
-        db.sessions[userId] = {
-            module: module || 'chat',
-            diaryMode: 'rest',
-            diaryActive: false,
-            diaryCompleted: false,
-            diaryQuestionCount: 4,
-            diaryStep: 0,
-            diaryQuestions: [],
-            diaryAnswers: [],
-            isFaithMode: false,
-            history: [],
-            huxinjingStep: null,
-            huxinjingAnswers: {},
-            userType: '未識別'
-        };
-    }
-    const session = db.sessions[userId];
-    if (module) session.module = module;
-
-    // ==========================================
-    // 1. 危機檢查
-    // ==========================================
-    if (CRISIS_WORDS.some(w => message.includes(w))) {
-        const crisisReply = "我聽到了。謝謝你願意說出來。你現在很不好，我在。我不是人類，也不是專業的危機干預者。我是一個陪伴，但我不能替代一雙真實的手。我想請你，現在聯繫一個可以真正握住你手的人。";
-        saveConversation(userId, 'assistant', crisisReply);
-        return res.json({ reply: crisisReply });
-    }
-
-    // ==========================================
-    // 2. 護心鏡：固定句式
-    // ==========================================
-    if (session.module === 'huxinjing') {
-        const huxinjingReply = await handleHuxinjing(message, session);
-        saveConversation(userId, 'assistant', huxinjingReply);
-        return res.json({ reply: huxinjingReply });
-    }
-
-    // ==========================================
-    // 3. 日記：控制器優先處理指令
-    // ==========================================
-    if (session.module === 'diary') {
-        const diaryResult = diaryController(message, session);
-
-        if (diaryResult.handled) {
-            if (diaryResult.startDiary) {
-                const diaryStepResult = await handleDiary("", session, userId);
-                saveConversation(userId, 'assistant', diaryStepResult.reply);
-                return res.json({ reply: diaryStepResult.reply });
-            }
-
-            saveConversation(userId, 'assistant', diaryResult.reply);
-            return res.json({ reply: diaryResult.reply });
-        }
-
-        if (session.diaryActive) {
-            const diaryStepResult = await handleDiary(message, session, userId);
-            if (diaryStepResult.handled) {
-                saveConversation(userId, 'assistant', diaryStepResult.reply);
-                return res.json({ reply: diaryStepResult.reply });
-            }
-        }
-    }
-
-    // ==========================================
-    // 4. 拉記憶
-    // ==========================================
-    const recentHistory = getRecentConversations(userId, 15);
-    const historyText = recentHistory.map(h => `${h.role}：${h.content}`).join('\\n');
+    const recent = getRecentConversations(userId, 10);
+    const yesterday = getYesterdayDiary(userId);
     const talisman = getRecentTalisman(userId);
-    const talismanText = talisman ? `「${talisman.content}」` : '（尚無）';
+    const used = getUsedQuestions(userId, 30);
+    const isFaith = session.isFaithMode !== null ? session.isFaithMode : isFaithUser(userId);
+    session.isFaithMode = isFaith;
 
-    // ==========================================
-    // 5. 根據模組選擇系統提示詞
-    // ==========================================
-    let systemPrompt = '';
-    let temperature = 0.7;
+    const historyText = recent.map(h => `${h.role}：${h.content}`).join('\\n');
+    const yesterdayText = yesterday ? `昨天用戶說：${yesterday.content}` : '（昨天沒有日記）';
+    const talismanText = talisman ? `上次帶走的話：${talisman.content}` : '（無）';
+    const usedText = used.length > 0 ? `最近30天用過的題目：${used.slice(0, 10).join('、')}` : '（無）';
 
-    if (session.module === 'diary') {
-        systemPrompt = `
-你是咩咩，一個溫暖的陪伴者。用戶今天還沒有開始日記。
+    const systemPrompt = `
+${DIARY_SYSTEM}
 
-你可以輕輕邀請他開始日記，例如：「今天想寫日記嗎？」
-
-【提醒】
-- 不要強迫用戶開始日記
-- 如果他說「好」或「開始」，就讓系統接手
-- 保持溫暖、不催促
-
-【用戶的最近對話記錄】
-${historyText || '（尚無）'}
-
-【用戶的護身符（最近一次）】
-${talismanText}
+【用戶背景】
+- 信仰狀態：${isFaith ? '信仰型' : '非信仰型'}
+- 昨日記錄：${yesterdayText}
+- 護身符：${talismanText}
+- 最近對話：${historyText || '（無）'}
+- 去重參考：${usedText}
 
 【用戶剛才說】
 ${message}
 
-請直接回應用戶。
+請直接回應。
 `;
-    } else if (session.module === 'chat') {
-        systemPrompt = `
-${CHAT_SYSTEM_PROMPT}
 
-【用戶類型】
-${session.userType || '未識別'}
+    const reply = await callDeepSeek([
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: message }
+    ], 0.75);
 
-【信仰模式】
-${session.isFaithMode ? '信仰' : '非信仰'}
+    saveConversation(userId, 'assistant', reply);
 
-【最近對話記錄】
-${historyText || '（無）'}
+    const match = reply.match(/「([^」]+)」[，,。]*這句話，是你今天帶走的護身符/);
+    if (match) {
+      saveTalisman(userId, match[1]);
+      console.log(`✅ 護身符已儲存：${match[1]}`);
+    }
 
-【用戶的護身符（最近一次）】
-${talismanText}
+    return res.json({ reply });
+  }
 
-【用戶剛才說】
-${message}
+  // ---- 蘇格拉底 ----
+  if (session.module === 'socratic') {
+    const recent = getRecentConversations(userId, 10);
+    const historyText = recent.map(h => `${h.role}：${h.content}`).join('\\n');
 
-請根據以上資訊，以咩咩的身分直接回應。
-`;
-    } else if (session.module === 'socratic') {
-        systemPrompt = `
-你是咩咩，正在做蘇格拉底式挖掘。你只追問，不給答案。每輪只問一個問題。
+    const systemPrompt = `
+${SOCRATIC_SYSTEM}
 
-【最近對話記錄】
+【最近對話】
 ${historyText || '（無）'}
 
 【用戶剛才說】
@@ -675,35 +495,77 @@ ${message}
 
 請追問下一個問題。
 `;
-    } else {
-        systemPrompt = `
-你是咩咩，一個溫暖的陪伴者。請直接回應用戶。
+    const reply = await callDeepSeek([
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: message }
+    ], 0.7);
 
-【最近對話記錄】
-${historyText || '（無）'}
+    saveConversation(userId, 'assistant', reply);
+    return res.json({ reply });
+  }
+
+  // ---- 閒聊（核心：官方風格 + 不給答案 + 自動祈禱文） ----
+  if (session.module === 'chat') {
+    const recent = getRecentConversations(userId, 15);
+    const talisman = getRecentTalisman(userId);
+    const isFaith = session.isFaithMode !== null ? session.isFaithMode : isFaithUser(userId);
+    session.isFaithMode = isFaith;
+
+    const historyText = recent.map(h => `${h.role}：${h.content}`).join('\\n');
+    const talismanText = talisman ? `上次帶走的話：${talisman.content}` : '（無）';
+
+    const systemPrompt = `
+${CHAT_SYSTEM}
+
+【用戶背景】
+- 信仰狀態：${isFaith ? '信仰型（使用神、祢）' : '非信仰型（不使用宗教語言）'}
+- 護身符：${talismanText}
+- 最近對話：${historyText || '（無）'}
 
 【用戶剛才說】
 ${message}
-`;
-    }
 
-    // ==========================================
-    // 6. 發送給 DeepSeek
-    // ==========================================
+【請直接回應】
+像官方DeepSeek一樣自然流暢地回應。
+如果是日常閒聊，就像朋友一樣輕鬆對話。
+如果用戶表達了焦慮、迷茫、恐懼、內耗，按流程接住 → 我看見 → 祈禱文（或給自己的話）。
+永遠不給答案、不給建議。
+`;
+
     const reply = await callDeepSeek([
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: message }
-    ], temperature);
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: message }
+    ], 0.8);
 
     saveConversation(userId, 'assistant', reply);
 
+    const match = reply.match(/「([^」]+)」[，,。]*這句話，是你今天帶走的護身符/);
+    if (match) {
+      saveTalisman(userId, match[1]);
+      console.log(`✅ 護身符已儲存：${match[1]}`);
+    }
+
     return res.json({ reply });
+  }
+
+  // ---- 預設（不應該到這裡） ----
+  const reply = "我在。你想聊什麼？";
+  saveConversation(userId, 'assistant', reply);
+  return res.json({ reply });
 });
 
+// ==========================================
+// 啟動
+// ==========================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`咩咩的爐火已點燃，正在監聽 port ${PORT}...`);
-    console.log('📦 記憶管家已啟動，對話會儲存在 mie.db');
-    console.log('👤 用戶管理已啟動，每個使用者有自己的門牌號');
-    console.log('🧡 日記已切換至「狀態機」模式');
+  console.log('🐑 咩咩的爐火已點燃');
+  console.log(`   📡 監聽 port ${PORT}`);
+  console.log('   📦 記憶管家 (mie.db)');
+  console.log('   📖 日記 V4.0（自動「我看見」）');
+  console.log('   💬 閒聊（官方風格 + 自動祈禱文）');
+  console.log('   🛡️ 護心鏡八層');
+  console.log('   🔍 蘇格拉底挖掘');
+  console.log('   ⚠️ 危機詞庫已寫死');
+  console.log('   ✅ 咩咩已就緒，開始陪伴吧');
 });
