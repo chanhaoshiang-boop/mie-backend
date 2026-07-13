@@ -280,6 +280,55 @@ async function handleHuxinjing(userMessage, session) {
 }
 
 // ==========================================
+// 解析日記意圖
+// ==========================================
+function parseDiaryIntent(message) {
+    const numberMap = {
+        "一": 1,
+        "二": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6
+    };
+
+    let count = null;
+
+    // 抓阿拉伯數字
+    const digitMatch = message.match(/(\\d+)/);
+    if (digitMatch) {
+        count = parseInt(digitMatch[1]);
+    }
+
+    // 抓中文數字
+    for (const key in numberMap) {
+        if (message.includes(key + "題")) {
+            count = numberMap[key];
+        }
+    }
+
+    // 語意判斷
+    if (
+        message.includes("少一點") ||
+        message.includes("簡單一點") ||
+        message.includes("快一點")
+    ) {
+        count = 1;
+    }
+
+    if (count) {
+        return {
+            intent: "SET_QUESTION_COUNT",
+            count: count
+        };
+    }
+
+    return {
+        intent: "NONE"
+    };
+}
+
+// ==========================================
 // 日記主廚（狀態機控制流程）
 // ==========================================
 async function handleDiary(userMessage, session, userId) {
@@ -304,7 +353,6 @@ async function handleDiary(userMessage, session, userId) {
 
     // 推進到下一步
     session.diaryStep++;
-    // ✅ 調整一：使用 session.diaryQuestions，而不是 DIARY_STEPS
     const currentStep = session.diaryQuestions[session.diaryStep - 1];
     
     // 用 DeepSeek 潤色問題
@@ -380,8 +428,24 @@ ${answers.map((a, i) => `${i+1}. ${a}`).join('\\n')}
 // 日記控制器（處理指令）
 // ==========================================
 function diaryController(message, session) {
+    // 🆕 先解析意圖
+    const intent = parseDiaryIntent(message);
+
+    if (intent.intent === "SET_QUESTION_COUNT") {
+        session.diaryQuestionCount = intent.count;
+        session.diaryQuestions = DIARY_STEPS.slice(0, intent.count);
+        session.diaryStep = 0;
+        session.diaryActive = true;
+
+        return {
+            handled: true,
+            reply: null,
+            startDiary: true
+        };
+    }
+
     // ==========================
-    // 使用者指定題數
+    // 使用者指定題數（原有用 regex 匹配）
     // ==========================
     const countMatch = message.match(/(\\d+)\\s*[題题]/);
     if (countMatch) {
@@ -415,7 +479,7 @@ function diaryController(message, session) {
     }
 
     // ==========================
-    // 安息模式（✅ 調整三：改為 3 題）
+    // 安息模式
     // ==========================
     if (message.includes("安息模式") || message.includes("慢慢")) {
         session.diaryActive = true;
@@ -476,7 +540,7 @@ app.post('/api/chat', async (req, res) => {
     saveConversation(userId, 'user', message);
 
     // ==========================================
-    // 初始化 Session（✅ 調整二：補齊 diaryActive、diaryCompleted）
+    // 初始化 Session
     // ==========================================
     if (!db.sessions[userId]) {
         db.sessions[userId] = {
@@ -521,7 +585,14 @@ app.post('/api/chat', async (req, res) => {
     // ==========================================
     if (session.module === 'diary') {
         const diaryResult = diaryController(message, session);
+
         if (diaryResult.handled) {
+            if (diaryResult.startDiary) {
+                const diaryStepResult = await handleDiary("", session, userId);
+                saveConversation(userId, 'assistant', diaryStepResult.reply);
+                return res.json({ reply: diaryStepResult.reply });
+            }
+
             saveConversation(userId, 'assistant', diaryResult.reply);
             return res.json({ reply: diaryResult.reply });
         }
