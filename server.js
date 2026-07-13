@@ -72,12 +72,12 @@ function getRecentTalisman(userId) {
 }
 
 // ==========================================
-// 危機詞（寫死在代碼裡，最高優先級）
+// 危機詞
 // ==========================================
 const CRISIS_WORDS = ["不想活了", "想死", "想消失", "想結束", "活不下去了", "沒有意義", "反正沒人會在意", "消失了也沒人知道", "我不知道還能撐多久"];
 
 // ==========================================
-// 護心鏡八層固定句式（不經過DeepSeek）
+// 護心鏡八層固定句式
 // ==========================================
 const MIRROR_STEPS = [
     { layer: 1, question: "今天最讓你心裡起情緒波瀾的一件事是什麼？", blockFollowUp: "那今天有沒有哪件事，讓你心裡『咯噔』了一下？哪怕很小？" },
@@ -241,7 +241,7 @@ async function generateHuxinjingInsight(answers) {
 
     const userPrompt = `
 用戶每一層的回答（逐字引用）：
-${Object.entries(userAnswers).map(([k, v]) => `第${k}層：${v}`).join('\\\\n')}
+${Object.entries(userAnswers).map(([k, v]) => `第${k}層：${v}`).join('\\n')}
 
 請輸出「我看見」：
 `;
@@ -368,19 +368,13 @@ app.post('/api/chat', async (req, res) => {
         return res.json({ reply: huxinjingReply });
     }
 
-    // ==========================================
-    // 3. 所有其他模組（日記、閒聊、蘇格拉底）
-    //    ✅ 全部交給 DeepSeek
-    //    後端只做三件事：拉記憶、打包、轉發
-    // ==========================================
-
-    // 拉記憶
+    // 3. 拉記憶
     const recentHistory = getRecentConversations(userId, 15);
-    const historyText = recentHistory.map(h => `${h.role}：${h.content}`).join('\\\\n');
+    const historyText = recentHistory.map(h => `${h.role}：${h.content}`).join('\\n');
     const talisman = getRecentTalisman(userId);
     const talismanText = talisman ? `「${talisman.content}」` : '（尚無）';
 
-    // 根據模組選擇系統提示詞
+    // 4. 根據模組選擇系統提示詞
     let systemPrompt = '';
     let temperature = 0.7;
 
@@ -450,7 +444,7 @@ ${message}
 `;
     }
 
-    // 發送給 DeepSeek
+    // 5. 發送給 DeepSeek
     const reply = await callDeepSeek([
         { role: 'system', content: systemPrompt },
         { role: 'user', content: message }
@@ -458,7 +452,7 @@ ${message}
 
     saveConversation(userId, 'assistant', reply);
 
-    // 嘗試提取護身符（日記和護心鏡可能會有）
+    // 嘗試提取護身符
     const talismanMatch = reply.match(/「([^」]+)」[，,。]*這句話，是你今天帶走的護身符/);
     if (talismanMatch) {
         const talisman = talismanMatch[1];
