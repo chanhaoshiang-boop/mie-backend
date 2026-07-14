@@ -33,9 +33,17 @@ db.exec(`
     userId TEXT,
     role TEXT,
     content TEXT,
+    module TEXT DEFAULT 'chat',
     createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
   )
 `);
+
+// 升級舊資料庫：新增 module 欄位
+try {
+  db.exec(`ALTER TABLE conversations ADD COLUMN module TEXT DEFAULT 'chat'`);
+} catch (e) {
+  // 欄位可能已經存在，忽略錯誤
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS talismans (
@@ -56,8 +64,8 @@ function getOrCreateUser(nickname) {
   return result.lastInsertRowid;
 }
 
-function saveConversation(userId, role, content) {
-  db.prepare('INSERT INTO conversations (userId, role, content) VALUES (?, ?, ?)').run(userId, role, content);
+function saveConversation(userId, role, content, module = 'chat') {
+  db.prepare('INSERT INTO conversations (userId, role, content, module) VALUES (?, ?, ?, ?)').run(userId, role, content, module);
 }
 
 function getRecentConversations(userId, limit = 15) {
@@ -428,14 +436,16 @@ function diaryController(message, session) {
 // ==========================================
 app.get('/api/history/:userId', (req, res) => {
   const { userId } = req.params;
+  const { module } = req.query;
   try {
-    const rows = db.prepare(`
-      SELECT role, content, createdAt
-      FROM conversations
-      WHERE userId = ?
-      ORDER BY id ASC
-      LIMIT 100
-    `).all(userId);
+    let sql = 'SELECT role, content, createdAt FROM conversations WHERE userId = ?';
+    const params = [userId];
+    if (module) {
+      sql += ' AND module = ?';
+      params.push(module);
+    }
+    sql += ' ORDER BY id ASC LIMIT 100';
+    const rows = db.prepare(sql).all(...params);
     res.json(rows);
   } catch (error) {
     console.error('讀取歷史失敗:', error);
@@ -468,7 +478,7 @@ app.post('/api/chat', async (req, res) => {
     return res.status(400).json({ error: '未登入' });
   }
 
-  saveConversation(userId, 'user', message);
+ saveConversation(userId, 'user', message, session.module);
 
   if (!db.sessions[userId]) {
     db.sessions[userId] = {
@@ -493,14 +503,14 @@ app.post('/api/chat', async (req, res) => {
   // 危機檢查
   if (CRISIS_WORDS.some(w => message.includes(w))) {
     const crisisReply = "我聽到了。謝謝你願意說出來。你現在很不好，我在。我不是人類，也不是專業的危機干預者。我是一個陪伴，但我不能替代一雙真實的手。我想請你，現在聯繫一個可以真正握住你手的人。";
-    saveConversation(userId, 'assistant', crisisReply);
+    saveConversation(userId, 'assistant', crisisReply, session.module);
     return res.json({ reply: crisisReply });
   }
 
   // 護心鏡
   if (session.module === 'huxinjing') {
     const reply = await handleHuxinjing(message, session);
-    saveConversation(userId, 'assistant', reply);
+    saveConversation(userId, 'assistant', reply, session.module);
     return res.json({ reply });
   }
 
@@ -510,14 +520,14 @@ app.post('/api/chat', async (req, res) => {
 
     if (diaryResult.handled && diaryResult.startDiary) {
       const diaryStepResult = await handleDiary("", session, userId);
-      saveConversation(userId, 'assistant', diaryStepResult.reply);
+      saveConversation(userId, 'assistant', diaryStepResult.reply, session.module);
       return res.json({ reply: diaryStepResult.reply });
     }
 
     if (session.diaryActive) {
       const diaryStepResult = await handleDiary(message, session, userId);
       if (diaryStepResult.handled) {
-        saveConversation(userId, 'assistant', diaryStepResult.reply);
+        saveConversation(userId, 'assistant', diaryStepResult.reply, session.module);
         return res.json({ reply: diaryStepResult.reply });
       }
     }
@@ -589,7 +599,7 @@ ${message}
     { role: 'user', content: message }
   ], temperature);
 
-  saveConversation(userId, 'assistant', reply);
+  saveConversation(userId, 'assistant', reply, session.module);
   return res.json({ reply });
 });
 
