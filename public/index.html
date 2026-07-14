@@ -612,7 +612,7 @@
 
             // ===== 載入歷史對話（從後端） =====
             try {
-                const response = await fetch(`${API_BASE}/api/history/${currentUserId}`);
+                const response = await fetch(`${API_BASE}/api/history/${currentUserId}?module=chat`);
                 if (response.ok) {
                     const history = await response.json();
                     for (const msg of history) {
