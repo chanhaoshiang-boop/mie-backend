@@ -545,6 +545,26 @@ ${message}
 });
 
 // ==========================================
+// 取得歷史對話
+// ==========================================
+app.get('/api/history/:userId', (req, res) => {
+  const { userId } = req.params;
+  try {
+    const rows = db.prepare(`
+      SELECT role, content, createdAt 
+      FROM conversations 
+      WHERE userId = ? 
+      ORDER BY id ASC 
+      LIMIT 100
+    `).all(userId);
+    res.json(rows);
+  } catch (error) {
+    console.error('讀取歷史失敗:', error);
+    res.status(500).json({ error: '讀取歷史失敗' });
+  }
+});
+
+// ==========================================
 // 啟動
 // ==========================================
 const PORT = process.env.PORT || 3000;
