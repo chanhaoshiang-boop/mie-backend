@@ -432,24 +432,33 @@ function diaryController(message, session) {
 }
 
 // ==========================================
-// 取得歷史對話 API
+// 取得歷史對話 API（分組功能）
 // ==========================================
 app.get('/api/history/:userId', (req, res) => {
   const { userId } = req.params;
   const { module } = req.query;
+
   try {
+    // 如果前端有傳 module，就只讀取該模組的對話
     let sql = 'SELECT role, content, createdAt FROM conversations WHERE userId = ?';
     const params = [userId];
+
     if (module) {
       sql += ' AND module = ?';
       params.push(module);
     }
-    sql += ' ORDER BY id ASC LIMIT 100';
-    const rows = db.prepare(sql).all(...params);
-    res.json(rows);
+
+    sql += ' ORDER BY id DESC LIMIT 100';
+
+    const stmt = db.prepare(sql);
+    const rows = stmt.all(...params);
+
+    // 反轉順序，讓較舊的在前，較新的在後
+    res.json(rows.reverse());
   } catch (error) {
     console.error('讀取歷史失敗:', error);
-    res.status(500).json({ error: '讀取歷史失敗' });
+    // 出錯時回傳空陣列，讓前端不要崩潰
+    res.json([]);
   }
 });
 
