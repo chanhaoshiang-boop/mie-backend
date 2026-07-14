@@ -687,8 +687,8 @@
                 }
             }
 
-            switchLayer(0);
-            userInput.focus();
+   // switchLayer(0);  // ✅ 已註解，避免清空剛載入的歷史
+   userInput.focus();
 
             if (!localStorage.getItem('mie_pwa_hint_shown')) {
                 setTimeout(() => {
