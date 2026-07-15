@@ -62,9 +62,14 @@ function getOrCreateUser(nickname) {
 }
 
 function saveConversation(userId, role, content, module = 'chat') {
-  db.prepare('INSERT INTO conversations (userId, role, content, module) VALUES (?, ?, ?, ?)').run(userId, role, content, module);
+  console.log('🔍 正在儲存對話:', { userId, role, content: content.slice(0, 20), module });
+  try {
+    db.prepare('INSERT INTO conversations (userId, role, content, module) VALUES (?, ?, ?, ?)').run(userId, role, content, module);
+    console.log('✅ 儲存成功');
+  } catch (e) {
+    console.log('❌ 儲存失敗:', e.message);
+  }
 }
-
 function getRecentConversations(userId, limit = 15) {
   return db.prepare('SELECT role, content FROM conversations WHERE userId = ? ORDER BY id DESC LIMIT ?').all(userId, limit).reverse();
 }
