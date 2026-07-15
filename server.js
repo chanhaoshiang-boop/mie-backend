@@ -558,15 +558,13 @@ app.get('/api/history/:userId', (req, res) => {
 // ==========================================
 // API 路由
 // ==========================================
+
 app.post('/api/login', (req, res) => {
   const { nickname } = req.body;
-  
   console.log('📥 收到登入請求:', nickname);
-  
   if (!nickname || nickname.trim() === '') {
     return res.status(400).json({ error: '請輸入名字' });
   }
-
   try {
     const userId = getOrCreateUser(nickname.trim());
     console.log('✅ 登入成功，userId:', userId);
@@ -577,7 +575,16 @@ app.post('/api/login', (req, res) => {
   }
 });
 
-  // ===== 先初始化 session =====
+app.post('/api/chat', async (req, res) => {
+  // ===== 從請求中取出資料 =====
+  const { userId, message, module } = req.body;
+
+  // ===== 檢查 userId =====
+  if (!userId) {
+    return res.status(400).json({ error: '未登入' });
+  }
+
+  // ===== 初始化 session =====
   if (!db.sessions[userId]) {
     db.sessions[userId] = {
       module: module || 'chat',
@@ -598,7 +605,7 @@ app.post('/api/login', (req, res) => {
   const session = db.sessions[userId];
   if (module) session.module = module;
 
-  // ===== 現在 session 可用了，儲存使用者訊息 =====
+  // ===== 儲存使用者訊息 =====
   saveConversation(userId, 'user', message, session.module);
 
   // 危機檢查
