@@ -1,4 +1,3 @@
-import fs from 'fs';
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -562,8 +561,7 @@ app.get('/api/history/:userId', (req, res) => {
 app.post('/api/login', (req, res) => {
   const { nickname } = req.body;
   
-  // ✅ 直接用 import 進來的 fs，不要再 require
-  fs.writeFileSync('/tmp/login-test.txt', `收到登入請求: ${nickname} 時間: ${new Date().toISOString()}\\n`, { flag: 'a' });
+  console.log('📥 收到登入請求:', nickname);
   
   if (!nickname || nickname.trim() === '') {
     return res.status(400).json({ error: '請輸入名字' });
@@ -571,9 +569,10 @@ app.post('/api/login', (req, res) => {
 
   try {
     const userId = getOrCreateUser(nickname.trim());
+    console.log('✅ 登入成功，userId:', userId);
     res.json({ userId, nickname: nickname.trim() });
   } catch (error) {
-    console.error('登入錯誤:', error);
+    console.error('❌ 登入錯誤:', error);
     res.status(500).json({ error: '登入失敗，請稍後再試' });
   }
 });
