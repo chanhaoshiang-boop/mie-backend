@@ -55,10 +55,25 @@ db.exec(`
 // 輔助函數
 // ==========================================
 function getOrCreateUser(nickname) {
-  const existing = db.prepare('SELECT id FROM users WHERE nickname = ?').get(nickname);
-  if (existing) return existing.id;
-  const result = db.prepare('INSERT INTO users (nickname) VALUES (?)').run(nickname);
-  return result.lastInsertRowid;
+  const cleanNickname = nickname.trim();
+  console.log(`🔍 查詢或建立用戶：${cleanNickname}`);
+  
+  let existing = db.prepare('SELECT id FROM users WHERE nickname = ?').get(cleanNickname);
+  if (existing) {
+    console.log(`✅ 用戶已存在：${cleanNickname} (ID: ${existing.id})`);
+    return existing.id;
+  }
+  
+  try {
+    const result = db.prepare('INSERT INTO users (nickname) VALUES (?)').run(cleanNickname);
+    console.log(`✅ 新用戶建立：${cleanNickname} (ID: ${result.lastInsertRowid})`);
+    return result.lastInsertRowid;
+  } catch (error) {
+    console.error(`❌ 建立用戶失敗：${cleanNickname}`, error.message);
+    existing = db.prepare('SELECT id FROM users WHERE nickname = ?').get(cleanNickname);
+    if (existing) return existing.id;
+    throw error;
+  }
 }
 
 function saveConversation(userId, role, content, module = 'chat') {
@@ -70,6 +85,7 @@ function saveConversation(userId, role, content, module = 'chat') {
     console.log('❌ 儲存失敗:', e.message);
   }
 }
+
 function getRecentConversations(userId, limit = 15) {
   return db.prepare('SELECT role, content FROM conversations WHERE userId = ? ORDER BY id DESC LIMIT ?').all(userId, limit).reverse();
 }
@@ -81,7 +97,6 @@ function saveTalisman(userId, content) {
 function getRecentTalisman(userId) {
   return db.prepare('SELECT content, createdAt FROM talismans WHERE userId = ? ORDER BY createdAt DESC LIMIT 1').get(userId);
 }
-
 // ==========================================
 // 危機詞
 // ==========================================
