@@ -722,3 +722,5 @@ app.listen(PORT, () => {
   console.log('🛡️ 護心鏡八層已就緒');
   console.log('✅ 咩咩已就緒，開始陪伴吧');
 });
+
+export default app;
