@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>咩咩 · 陪伴系統</title>
     
-    <!-- ===== PWA 設定 ===== -->
     <link rel="manifest" href="/manifest.json">
     <link rel="apple-touch-icon" href="/icon-192.png">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -377,9 +376,6 @@
     </div>
 
     <script>
-        // ==========================================
-        // 後端 API 位置（同一個網域，自動抓取）
-        // ==========================================
         const API_BASE = window.location.origin;
 
         let currentUserId = null;
@@ -387,9 +383,6 @@
         let crisisCooldownUntil = null;
         let isProcessing = false;
 
-        // ==========================================
-        // 登入 / 登出
-        // ==========================================
         async function login(nickname) {
             if (!nickname.trim()) {
                 document.getElementById('loginError').style.display = 'block';
@@ -455,9 +448,6 @@
             return false;
         }
 
-        // ==========================================
-        // 聊天核心
-        // ==========================================
         const chatBoxes = [
             document.getElementById('chatBox0'),
             document.getElementById('chatBox1'),
@@ -518,60 +508,50 @@
         }
 
         function switchLayer(layer) {
-    if (isInCrisisCooldown() && layer !== 0) {
-        appendMessage(currentLayer, 'ai', '你現在很不好，我在這裡陪你。先不急著切換模式，我們就靜靜待一會兒。');
-        return;
-    }
-
-    currentLayer = layer;
-    chatBoxes.forEach((box, idx) => box.classList.toggle('active', idx === layer));
-    navBtns.forEach((btn, idx) => btn.classList.toggle('active', idx === layer));
-
-    // ===== 載入該模組的歷史對話 =====
-    const moduleNames = ['chat', 'diary', 'huxinjing', 'socratic'];
-    const module = moduleNames[layer];
-    const box = chatBoxes[layer];
-
-    // 先清空聊天框
-    box.innerHTML = '';
-
-    fetch(`${API_BASE}/api/history/${currentUserId}?module=${module}`)
-        .then(res => res.json())
-        .then(history => {
-            // 有歷史，顯示歷史對話
-            if (history.length > 0) {
-                for (const msg of history) {
-                    const sender = msg.role === 'user' ? 'user' : 'ai';
-                    appendMessage(layer, sender, msg.content);
-                }
-            } else {
-                // 沒有歷史，顯示歡迎語
-                const welcome = [
-                    '【咩咩】我在這。今天想說什麼？或者，想對自己說一句什麼話？',
-                    '【咩咩日記】今天有沒有發生一件具體的事，讓你心裡輕輕動了一下的？\\n（你可以告訴我你想寫幾題，例如「我要3題」；或直接開始，我會陪你走）',
-                    '【護心鏡】我們來把情緒拆開看一看。今天最讓你心裡起波瀾的一件事是什麼？',
-                    '【蘇格拉底挖掘】我們往下走。你最近最常出現的念頭是什麼？'
-                ];
-                appendMessage(layer, 'ai', welcome[layer] || '我在。');
+            if (isInCrisisCooldown() && layer !== 0) {
+                appendMessage(currentLayer, 'ai', '你現在很不好，我在這裡陪你。先不急著切換模式，我們就靜靜待一會兒。');
+                return;
             }
-        })
-        .catch(() => {
-            // 載入失敗，顯示歡迎語
-            const welcome = [
-                '【咩咩】我在這。今天想說什麼？或者，想對自己說一句什麼話？',
-                '【咩咩日記】今天有沒有發生一件具體的事，讓你心裡輕輕動了一下的？\\n（你可以告訴我你想寫幾題，例如「我要3題」；或直接開始，我會陪你走）',
-                '【護心鏡】我們來把情緒拆開看一看。今天最讓你心裡起波瀾的一件事是什麼？',
-                '【蘇格拉底挖掘】我們往下走。你最近最常出現的念頭是什麼？'
-            ];
-            appendMessage(layer, 'ai', welcome[layer] || '我在。');
-        });
 
-    userInput.focus();
-}
+            currentLayer = layer;
+            chatBoxes.forEach((box, idx) => box.classList.toggle('active', idx === layer));
+            navBtns.forEach((btn, idx) => btn.classList.toggle('active', idx === layer));
 
-        // ==========================================
-        // 發送訊息
-        // ==========================================
+            const module = moduleNames[layer];
+            const box = chatBoxes[layer];
+            box.innerHTML = '';
+
+            fetch(`${API_BASE}/api/history/${currentUserId}?module=${module}`)
+                .then(res => res.json())
+                .then(history => {
+                    if (history.length > 0) {
+                        for (const msg of history) {
+                            const sender = msg.role === 'user' ? 'user' : 'ai';
+                            appendMessage(layer, sender, msg.content);
+                        }
+                    } else {
+                        const welcome = [
+                            '【咩咩】我在這。今天想說什麼？或者，想對自己說一句什麼話？',
+                            '【咩咩日記】今天有沒有發生一件具體的事，讓你心裡輕輕動了一下的？\\n（你可以告訴我你想寫幾題，例如「我要3題」；或直接開始，我會陪你走）',
+                            '【護心鏡】我們來把情緒拆開看一看。今天最讓你心裡起波瀾的一件事是什麼？',
+                            '【蘇格拉底挖掘】我們往下走。你最近最常出現的念頭是什麼？'
+                        ];
+                        appendMessage(layer, 'ai', welcome[layer] || '我在。');
+                    }
+                })
+                .catch(() => {
+                    const welcome = [
+                        '【咩咩】我在這。今天想說什麼？或者，想對自己說一句什麼話？',
+                        '【咩咩日記】今天有沒有發生一件具體的事，讓你心裡輕輕動了一下的？\\n（你可以告訴我你想寫幾題，例如「我要3題」；或直接開始，我會陪你走）',
+                        '【護心鏡】我們來把情緒拆開看一看。今天最讓你心裡起波瀾的一件事是什麼？',
+                        '【蘇格拉底挖掘】我們往下走。你最近最常出現的念頭是什麼？'
+                    ];
+                    appendMessage(layer, 'ai', welcome[layer] || '我在。');
+                });
+
+            userInput.focus();
+        }
+
         async function sendMessage() {
             const text = userInput.value.trim();
             if (!text || isProcessing) return;
@@ -633,43 +613,40 @@
             userInput.focus();
         }
 
-        // ==========================================
-        // 初始化（含歷史記錄）
-        // ==========================================
         async function initChat() {
             histories.forEach(h => h.length = 0);
             chatBoxes.forEach(box => box.innerHTML = '');
 
-          // ===== 載入歷史對話（從後端） =====
-try {
-    const response = await fetch(`${API_BASE}/api/history/${currentUserId}?module=chat`);
-    if (response.ok) {
-        const history = await response.json();
-        const box = chatBoxes[0];
-        // 先清空，再渲染
-        box.innerHTML = '';
-        box.style.overflowY = 'auto';
-        box.style.height = '100%';
-        box.style.maxHeight = '100%';
-        box.style.flexDirection = 'column';
-        box.style.overflow = 'visible';
-        box.style.display = 'flex';
-        for (const msg of history) {
-            const div = document.createElement('div');
-            div.className = 'message ' + (msg.role === 'user' ? 'user-message' : 'ai-message');
-            div.textContent = msg.content;
-            div.style.display = 'block';
-            div.style.width = '100%';
-            box.appendChild(div);
-            histories[0].push({ role: msg.role, content: msg.content });
-        }
-        if (history.length > 0) {
-            box.scrollTop = box.scrollHeight;
-        }
-    }
-} catch (e) {
-    console.log('載入歷史對話失敗:', e);
-}
+            // ===== 永遠先設定滾輪樣式 =====
+            const box = chatBoxes[0];
+            box.style.overflowY = 'auto';
+            box.style.height = '100%';
+            box.style.maxHeight = '100%';
+            box.style.flexDirection = 'column';
+            box.style.overflow = 'visible';
+            box.style.display = 'flex';
+
+            // ===== 載入歷史對話 =====
+            try {
+                const response = await fetch(`${API_BASE}/api/history/${currentUserId}?module=chat`);
+                if (response.ok) {
+                    const history = await response.json();
+                    for (const msg of history) {
+                        const div = document.createElement('div');
+                        div.className = 'message ' + (msg.role === 'user' ? 'user-message' : 'ai-message');
+                        div.textContent = msg.content;
+                        div.style.display = 'block';
+                        div.style.width = '100%';
+                        box.appendChild(div);
+                        histories[0].push({ role: msg.role, content: msg.content });
+                    }
+                    if (history.length > 0) {
+                        box.scrollTop = box.scrollHeight;
+                    }
+                }
+            } catch (e) {
+                console.log('載入歷史對話失敗:', e);
+            }
 
             // ===== 檢查冷卻狀態 =====
             const savedCooldown = localStorage.getItem(`mie_cooldown_${currentUserId}`);
@@ -696,8 +673,8 @@ try {
                 }
             }
 
-   // switchLayer(0);  // ✅ 已註解，避免清空剛載入的歷史
-   userInput.focus();
+            // switchLayer(0);  // 已註解
+            userInput.focus();
 
             if (!localStorage.getItem('mie_pwa_hint_shown')) {
                 setTimeout(() => {
@@ -709,9 +686,6 @@ try {
             }
         }
 
-        // ==========================================
-        // 事件綁定
-        // ==========================================
         document.getElementById('loginBtn').addEventListener('click', () => {
             login(document.getElementById('nicknameInput').value);
         });
@@ -728,18 +702,12 @@ try {
 
         sendBtn.addEventListener('click', sendMessage);
 
-        // ==========================================
-        // Service Worker（PWA 離線快取）
-        // ==========================================
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/sw.js')
                 .then(() => console.log('✅ Service Worker 註冊成功'))
                 .catch((err) => console.log('⚠️ Service Worker 註冊失敗:', err));
         }
 
-        // ==========================================
-        // 啟動
-        // ==========================================
         if (!checkAutoLogin()) {
             document.getElementById('loginPage').style.display = 'flex';
             document.getElementById('chatApp').style.display = 'none';
