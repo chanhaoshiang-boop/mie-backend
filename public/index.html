@@ -640,29 +640,33 @@
             histories.forEach(h => h.length = 0);
             chatBoxes.forEach(box => box.innerHTML = '');
 
-            // ===== 載入歷史對話（從後端） =====
-            try {
-                const response = await fetch(`${API_BASE}/api/history/${currentUserId}?module=chat`);
-                if (response.ok) {
-                    const history = await response.json();
-                    for (const msg of history) {
-                        const sender = msg.role === 'user' ? 'user' : 'ai';
-                        const box = chatBoxes[0];
-                        box.style.flexDirection = 'column';
-                        box.style.overflow = 'visible';
-                        const msgDiv = document.createElement('div');
-                        msgDiv.classList.add('message', sender === 'ai' ? 'ai-message' : 'user-message');
-                        msgDiv.textContent = msg.content;
-                        box.appendChild(msgDiv);
-                        histories[0].push({ role: msg.role, content: msg.content });
-                    }
-                    if (history.length > 0) {
-                        chatBoxes[0].scrollTop = chatBoxes[0].scrollHeight;
-                    }
-                }
-            } catch (e) {
-                console.log('載入歷史對話失敗:', e);
-            }
+           // ===== 載入歷史對話（從後端） =====
+try {
+    const response = await fetch(`${API_BASE}/api/history/${currentUserId}?module=chat`);
+    if (response.ok) {
+        const history = await response.json();
+        const box = chatBoxes[0];
+        // 先清空，再渲染
+        box.innerHTML = '';
+        box.style.flexDirection = 'column';
+        box.style.overflow = 'visible';
+        box.style.display = 'flex';
+        for (const msg of history) {
+            const div = document.createElement('div');
+            div.className = 'message ' + (msg.role === 'user' ? 'user-message' : 'ai-message');
+            div.textContent = msg.content;
+            div.style.display = 'block';
+            div.style.width = '100%';
+            box.appendChild(div);
+            histories[0].push({ role: msg.role, content: msg.content });
+        }
+        if (history.length > 0) {
+            box.scrollTop = box.scrollHeight;
+        }
+    }
+} catch (e) {
+    console.log('載入歷史對話失敗:', e);
+}
 
             // ===== 檢查冷卻狀態 =====
             const savedCooldown = localStorage.getItem(`mie_cooldown_${currentUserId}`);
