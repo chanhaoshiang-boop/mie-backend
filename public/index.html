@@ -614,77 +614,76 @@
         }
 
         async function initChat() {
-            histories.forEach(h => h.length = 0);
-            chatBoxes.forEach(box => box.innerHTML = '');
+    histories.forEach(h => h.length = 0);
+    chatBoxes.forEach(box => box.innerHTML = '');
 
-            // ===== 永遠先設定滾輪樣式 =====
-            const box = chatBoxes[0];
-            box.style.overflowY = 'auto';
-            box.style.height = '100%';
-            box.style.maxHeight = '100%';
-            box.style.flexDirection = 'column';
-            box.style.overflow = 'visible';
-            box.style.display = 'flex';
+    // ===== 永遠先設定滾輪樣式 =====
+    const box = chatBoxes[0];
+    box.style.overflowY = 'auto';
+    box.style.height = '100%';
+    box.style.maxHeight = '100%';
+    box.style.flexDirection = 'column';
+    box.style.display = 'flex';
 
-            // ===== 載入歷史對話 =====
-            try {
-                const response = await fetch(`${API_BASE}/api/history/${currentUserId}?module=chat`);
-                if (response.ok) {
-                    const history = await response.json();
-                    for (const msg of history) {
-                        const div = document.createElement('div');
-                        div.className = 'message ' + (msg.role === 'user' ? 'user-message' : 'ai-message');
-                        div.textContent = msg.content;
-                        div.style.display = 'block';
-                        div.style.width = '100%';
-                        box.appendChild(div);
-                        histories[0].push({ role: msg.role, content: msg.content });
-                    }
-                    if (history.length > 0) {
-                        box.scrollTop = box.scrollHeight;
-                    }
-                }
-            } catch (e) {
-                console.log('載入歷史對話失敗:', e);
+    // ===== 載入歷史對話 =====
+    try {
+        const response = await fetch(`${API_BASE}/api/history/${currentUserId}?module=chat`);
+        if (response.ok) {
+            const history = await response.json();
+            // 直接渲染，不要清空（因為已經清空過了）
+            for (const msg of history) {
+                const div = document.createElement('div');
+                div.className = 'message ' + (msg.role === 'user' ? 'user-message' : 'ai-message');
+                div.textContent = msg.content;
+                div.style.display = 'block';
+                box.appendChild(div);
+                histories[0].push({ role: msg.role, content: msg.content });
             }
-
-            // ===== 檢查冷卻狀態 =====
-            const savedCooldown = localStorage.getItem(`mie_cooldown_${currentUserId}`);
-            if (savedCooldown) {
-                const ts = parseInt(savedCooldown, 10);
-                if (Date.now() < ts) {
-                    crisisCooldownUntil = ts;
-                    document.getElementById('cooldown-banner').style.display = 'block';
-                } else {
-                    localStorage.removeItem(`mie_cooldown_${currentUserId}`);
-                }
-            }
-
-            // ===== 顯示各層歡迎語 =====
-            for (let i = 0; i < 4; i++) {
-                if (histories[i].length === 0) {
-                    const welcome = [
-                        '【咩咩】我在這。今天想說什麼？或者，想對自己說一句什麼話？',
-                        '【咩咩日記】今天有沒有發生一件具體的事，讓你心裡輕輕動了一下的？\\n（你可以告訴我你想寫幾題，例如「我要3題」；或直接開始，我會陪你走）',
-                        '【護心鏡】我們來把情緒拆開看一看。今天最讓你心裡起波瀾的一件事是什麼？',
-                        '【蘇格拉底挖掘】我們往下走。你最近最常出現的念頭是什麼？'
-                    ];
-                    appendMessage(i, 'ai', welcome[i]);
-                }
-            }
-
-            // switchLayer(0);  // 已註解
-            userInput.focus();
-
-            if (!localStorage.getItem('mie_pwa_hint_shown')) {
-                setTimeout(() => {
-                    const banner = document.getElementById('install-banner');
-                    banner.style.display = 'block';
-                    setTimeout(() => { banner.style.display = 'none'; }, 8000);
-                }, 3000);
-                localStorage.setItem('mie_pwa_hint_shown', 'true');
+            if (history.length > 0) {
+                box.scrollTop = box.scrollHeight;
             }
         }
+    } catch (e) {
+        console.log('載入歷史對話失敗:', e);
+    }
+
+    // ===== 檢查冷卻狀態 =====
+    const savedCooldown = localStorage.getItem(`mie_cooldown_${currentUserId}`);
+    if (savedCooldown) {
+        const ts = parseInt(savedCooldown, 10);
+        if (Date.now() < ts) {
+            crisisCooldownUntil = ts;
+            document.getElementById('cooldown-banner').style.display = 'block';
+        } else {
+            localStorage.removeItem(`mie_cooldown_${currentUserId}`);
+        }
+    }
+
+    // ===== 顯示各層歡迎語（只有當該層沒有歷史時才顯示） =====
+    for (let i = 0; i < 4; i++) {
+        if (histories[i].length === 0) {
+            const welcome = [
+                '【咩咩】我在這。今天想說什麼？或者，想對自己說一句什麼話？',
+                '【咩咩日記】今天有沒有發生一件具體的事，讓你心裡輕輕動了一下的？\\\\n（你可以告訴我你想寫幾題，例如「我要3題」；或直接開始，我會陪你走）',
+                '【護心鏡】我們來把情緒拆開看一看。今天最讓你心裡起波瀾的一件事是什麼？',
+                '【蘇格拉底挖掘】我們往下走。你最近最常出現的念頭是什麼？'
+            ];
+            appendMessage(i, 'ai', welcome[i]);
+        }
+    }
+
+    // switchLayer(0);  // 已註解
+    userInput.focus();
+
+    if (!localStorage.getItem('mie_pwa_hint_shown')) {
+        setTimeout(() => {
+            const banner = document.getElementById('install-banner');
+            banner.style.display = 'block';
+            setTimeout(() => { banner.style.display = 'none'; }, 8000);
+        }, 3000);
+        localStorage.setItem('mie_pwa_hint_shown', 'true');
+    }
+}
 
         document.getElementById('loginBtn').addEventListener('click', () => {
             login(document.getElementById('nicknameInput').value);
