@@ -648,6 +648,8 @@
                     for (const msg of history) {
                         const sender = msg.role === 'user' ? 'user' : 'ai';
                         const box = chatBoxes[0];
+                        box.style.flexDirection = 'column';
+                        box.style.overflow = 'visible';
                         const msgDiv = document.createElement('div');
                         msgDiv.classList.add('message', sender === 'ai' ? 'ai-message' : 'user-message');
                         msgDiv.textContent = msg.content;
