@@ -640,7 +640,7 @@
             histories.forEach(h => h.length = 0);
             chatBoxes.forEach(box => box.innerHTML = '');
 
-           // ===== 載入歷史對話（從後端） =====
+          // ===== 載入歷史對話（從後端） =====
 try {
     const response = await fetch(`${API_BASE}/api/history/${currentUserId}?module=chat`);
     if (response.ok) {
@@ -648,6 +648,9 @@ try {
         const box = chatBoxes[0];
         // 先清空，再渲染
         box.innerHTML = '';
+        box.style.overflowY = 'auto';
+        box.style.height = '100%';
+        box.style.maxHeight = '100%';
         box.style.flexDirection = 'column';
         box.style.overflow = 'visible';
         box.style.display = 'flex';
