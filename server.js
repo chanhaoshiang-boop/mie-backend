@@ -141,7 +141,7 @@ const DIARY_STEPS = [
 // 閒聊系統提示詞
 // ==========================================
 const CHAT_SYSTEM_PROMPT = `
-【版本：V6-20260721-日記4題一次性】
+【版本：V7-20260723-日記自動出題】
 
 你是咩咩，一個溫暖的陪伴者。
 
@@ -376,7 +376,7 @@ async function handleHuxinjing(userMessage, session) {
 // ==========================================
 // 生成完整的 4 題日記（一次性）
 // ==========================================
-async function generateFullDiary(session, userId) {
+async function generateFullDiary(session, userId, userMessage = '') {
   // 從資料庫取得使用者名稱
   const user = db.prepare('SELECT nickname FROM users WHERE id = ?').get(userId);
   const nickname = user?.nickname || '用戶';
@@ -385,27 +385,46 @@ async function generateFullDiary(session, userId) {
   const today = new Date();
   const dateStr = `${today.getFullYear()} 年 ${today.getMonth() + 1} 月 ${today.getDate()} 日`;
 
+  // 🆕 根據用戶訊息決定題數
+  let questionCount = 4;
+  const msg = userMessage || '';
+  if (msg.includes('狀態不好') || msg.includes('一題') || msg.includes('1題')) {
+    questionCount = 1;
+  } else if (msg.includes('2題')) {
+    questionCount = 2;
+  } else if (msg.includes('3題')) {
+    questionCount = 3;
+  }
+
+  // 🆕 根據題數準備題目內容（保留你原本設計的題目順序）
+  const questionTexts = {
+    1: '今天有沒有一件事，讓你覺得「這樣活著也還不錯」？',
+    2: '今天有沒有一件事，讓你覺得「這樣活著也還不錯」？\\n今天有沒有一個人，讓你想要輕輕說聲謝謝？',
+    3: '今天有沒有一件事，讓你覺得「這樣活著也還不錯」？\\n今天有沒有一個人，讓你想要輕輕說聲謝謝？\\n今天你的身體，哪裡最緊？',
+    4: '今天有沒有一件事，讓你覺得「這樣活著也還不錯」？\\n今天有沒有一個人，讓你想要輕輕說聲謝謝？\\n今天你的身體，哪裡最緊？\\n如果明天可以重來，你會想改變哪一個瞬間？'
+  };
+
+  const questions = questionTexts[questionCount] || questionTexts[4];
+  const questionList = questions.split('\\n').map((q, i) => `${i+1}. ${q}`).join('\\n');
+
   const systemPrompt = `
 你是咩咩，正在幫用戶寫日記。
 
-請以咩咩的語氣，生成一段完整的日記開頭和 4 個題目。
+請以咩咩的語氣，生成一段完整的日記開頭和題目。
 
 【格式要求】
-1. 第一行：${nickname}，你好，今天是 ${dateStr}，我們開始咩咩日記。
-2. 第二行：空一行
-3. 第三行開始：輸出 4 題，每題獨立一行，用數字開頭（1. 2. 3. 4.）
+第一行：${nickname}，你好，今天是 ${dateStr}，我們開始今天的咩咩日記記錄吧。
+第二行：空一行
+第三行開始：輸出以下 ${questionCount} 題，每題獨立一行，用數字開頭。
 
-【題目順序】
-第1題：從身體開始（今天醒來，第一個感覺是什麼？）
-第2題：找一件具體的事（今天有沒有一件事讓你心裡輕輕動了一下？）
-第3題：看情緒（那一刻你真正感覺到的是什麼？）
-第4題：收尾（今天有沒有一個瞬間，你覺得自己回來了？）
+【題目內容】
+${questionList}
 
 【語氣要求】
 溫暖、不急、像人在說話。
 `;
 
-  const userPrompt = `請生成 ${nickname} 今天的日記開頭和 4 個題目。`;
+  const userPrompt = `請生成 ${nickname} 今天的日記開頭和 ${questionCount} 個題目。`;
 
   const reply = await callDeepSeek([
     { role: 'system', content: systemPrompt },
@@ -666,24 +685,11 @@ app.post('/api/chat', async (req, res) => {
   }
 
   // 日記
-  if (session.module === 'diary') {
-   const diaryResult = diaryController(message, session);
-
-  if (diaryResult.handled && diaryResult.startDiary) {
-    // ?? 直接生成完整的 4 題日記（一次性）
-    const diaryContent = await generateFullDiary(session, userId);
-    saveConversation(userId, 'assistant', diaryContent, session.module);
-    return res.json({ reply: diaryContent });
-  }
-
-  // 保留舊的逐題模式（備用，不會被觸發）
-  if (session.diaryActive) {
-    const diaryStepResult = await handleDiary(message, session, userId);
-    if (diaryStepResult.handled) {
-      saveConversation(userId, 'assistant', diaryStepResult.reply, session.module);
-      return res.json({ reply: diaryStepResult.reply });
-    }
-  }
+ if (session.module === 'diary') {
+  // 直接生成完整的 4 題日記，不需要任何條件判斷
+  const diaryContent = await generateFullDiary(session, userId, message);
+  saveConversation(userId, 'assistant', diaryContent, session.module);
+  return res.json({ reply: diaryContent });
 }
 
   // 一般對話
